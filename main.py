@@ -9,9 +9,9 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Данные
-API_ID = 37513599
-API_HASH = '16c026e222cf800bdb8707c4f69eba39'
-CITY = "Красный Луч"
+API_ID = 
+API_HASH = ''
+CITY = ""
 
 #Чаты для просмотра ботом
 CHATS_TO_WATCH = [
@@ -25,7 +25,7 @@ CHATS_TO_WATCH = [
 
 #Ключевые слова и бот-токен
 KEYWORDS = ["авария", "дтп", "происшествие", "отключение", "пожар", "взрыв", "бпла"]
-BOT_TOKEN = "8591820146:AAG_9TnOwcJ46nncfyifX9wemJEeO4AJWMI"
+BOT_TOKEN = ""
 
 
 def init_db():
