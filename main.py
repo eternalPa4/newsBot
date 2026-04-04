@@ -9,10 +9,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ─── Настройки ────────────────────────────────────────────────────────────────
 
-API_ID = 37513599
-API_HASH = '16c026e222cf800bdb8707c4f69eba39'
+API_ID = 
+API_HASH = ''
 CITY = "Красный Луч"
-BOT_TOKEN = "8591820146:AAG_9TnOwcJ46nncfyifX9wemJEeO4AJWMI"
+BOT_TOKEN = ""
 
 # Локальные чаты — фильтр по городу не нужен
 CHATS_LOCAL = [
