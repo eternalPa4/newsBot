@@ -1,4 +1,6 @@
 import asyncio
+import os
+import re
 from datetime import datetime, timedelta
 from telethon import TelegramClient
 from telegram import Update, BotCommand, ReplyKeyboardMarkup, KeyboardButton
@@ -9,35 +11,76 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ─── Настройки ────────────────────────────────────────────────────────────────
 
-API_ID = 
-API_HASH = ''
-CITY = "Красный Луч"
-BOT_TOKEN = ""
+def load_env_file(path: str = ".env") -> None:
+    """Простой загрузчик .env без внешних зависимостей."""
+    if not os.path.exists(path):
+        return
+
+    with open(path, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def env_list(name: str, default: list[str]) -> list[str]:
+    value = os.getenv(name, "")
+    if not value.strip():
+        return default
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+load_env_file()
+
+API_ID = int(os.getenv("API_ID", "0"))
+API_HASH = os.getenv("API_HASH", "")
+CITY = os.getenv("CITY", "Красный Луч")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 # Локальные чаты — фильтр по городу не нужен
-CHATS_LOCAL = [
+CHATS_LOCAL = env_list("CHATS_LOCAL", [
     "luch24",
     "Kr_Luch_PROvse",
     "Kr_Luch_PROvse_Chat",
     "krluch_novosti",
     "vesti_KrasniyLuch"
-]
+])
 
 # Региональные чаты — фильтруем только сообщения с упоминанием города
-CHATS_REGIONAL = [
+CHATS_REGIONAL = env_list("CHATS_REGIONAL", [
     "luganskallnews",
     "prilet_lugansk"
-]
+])
 
 CHATS_TO_WATCH = CHATS_LOCAL + CHATS_REGIONAL
 
-CITY_ALIASES = [
+CITY_ALIASES = env_list("CITY_ALIASES", [
     "красный луч",
     "кр. луч",
     "кр.луч",
-]
+])
 
-KEYWORDS = ["авария", "дтп", "происшествие", "отключение", "пожар", "взрыв", "бпла"]
+EVENT_ALIASES = {
+    "авария":      ["авария", "аварии", "чп"],
+    "дтп":         ["дтп", "столкновение", "наезд"],
+    "происшествие":["происшествие", "инцидент"],
+    "отключение":  ["отключение", "без света", "нет света", "обесточ"],
+    "пожар":       ["пожар", "горит", "возгорание", "задымление"],
+    "взрыв":       ["взрыв", "хлопок", "детонация"],
+    "бпла":        ["бпла", "дрон", "беспилотник"],
+}
+
+KEYWORDS = env_list("KEYWORDS", ["авария", "дтп", "происшествие", "отключение", "пожар", "взрыв", "бпла"])
+EVENT_PATTERNS = {
+    event: re.compile("|".join(re.escape(alias) for alias in aliases), re.IGNORECASE)
+    for event, aliases in EVENT_ALIASES.items()
+    if event in KEYWORDS
+}
 
 # Кнопки меню → ключевые слова для поиска
 BUTTON_MAP = {
@@ -62,11 +105,11 @@ def message_matches_city(text: str) -> bool:
 
 
 def message_matches_keywords(text: str) -> str | None:
-    """Возвращает первое совпавшее ключевое слово или None."""
-    t = text.lower()
-    for kw in KEYWORDS:
-        if kw in t:
-            return kw
+    """Возвращает событие из KEYWORDS по синонимам или None."""
+    for event in KEYWORDS:
+        pattern = EVENT_PATTERNS.get(event)
+        if pattern and pattern.search(text):
+            return event
     return None
 
 
@@ -78,6 +121,20 @@ def get_main_keyboard():
         [KeyboardButton("📋 Сегодня"),    KeyboardButton("❓ Помощь")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
+
+
+def detect_event_from_query(text: str) -> str | None:
+    normalized = text.lower().strip()
+    for event in KEYWORDS:
+        pattern = EVENT_PATTERNS.get(event)
+        if pattern and pattern.search(normalized):
+            return event
+    return None
+
+
+def is_today_request(text: str) -> bool:
+    normalized = text.lower()
+    return any(phrase in normalized for phrase in ["сегодня", "за сегодня", "today"])
 
 
 # ─── Поиск ────────────────────────────────────────────────────────────────────
@@ -98,21 +155,38 @@ async def live_search_in_chats(query: str, hours: int = 720, limit_per_chat: int
     """Поиск по конкретному слову. Кнопки меню передают только ключевые слова."""
     results = []
     query_lower = query.lower()
+    target_event = detect_event_from_query(query)
     time_limit = datetime.now() - timedelta(hours=hours)
 
     for chat_username in CHATS_LOCAL:
         try:
             async for message, msg_time in _iter_chat(chat_username, time_limit, limit_per_chat):
-                if query_lower in message.text.lower():
-                    results.append({"text": message.text, "chat": chat_username, "date": msg_time})
+                message_event = message_matches_keywords(message.text)
+                matches = (message_event == target_event) if target_event else (query_lower in message.text.lower())
+                if matches:
+                    results.append({
+                        "text": message.text,
+                        "chat": chat_username,
+                        "date": msg_time,
+                        "keyword": message_event or query_lower
+                    })
         except Exception as e:
             print(f"Ошибка [{chat_username}]: {e}")
 
     for chat_username in CHATS_REGIONAL:
         try:
             async for message, msg_time in _iter_chat(chat_username, time_limit, limit_per_chat):
-                if query_lower in message.text.lower() and message_matches_city(message.text):
-                    results.append({"text": message.text, "chat": chat_username, "date": msg_time})
+                if not message_matches_city(message.text):
+                    continue
+                message_event = message_matches_keywords(message.text)
+                matches = (message_event == target_event) if target_event else (query_lower in message.text.lower())
+                if matches:
+                    results.append({
+                        "text": message.text,
+                        "chat": chat_username,
+                        "date": msg_time,
+                        "keyword": message_event or query_lower
+                    })
         except Exception as e:
             print(f"Ошибка [{chat_username}]: {e}")
 
@@ -280,6 +354,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_keyboard()
         )
     else:
+        if is_today_request(text):
+            await today_command(update, context)
+            return
+
+        detected_event = detect_event_from_query(text)
+        if detected_event:
+            context.args = [detected_event]
+            await search_command(update, context)
+            return
+
         # Свободный поиск
         context.args = text.split()
         await search_command(update, context)
@@ -288,6 +372,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ─── Запуск ───────────────────────────────────────────────────────────────────
 
 async def main():
+    if not API_ID or not API_HASH or not BOT_TOKEN:
+        raise ValueError(
+            "Проверьте .env: должны быть заполнены API_ID, API_HASH и BOT_TOKEN."
+        )
+
     await userbot.start()
     print("🔍 Юзербот запущен!")
 
